@@ -3,6 +3,7 @@ import { applyBrightnessContrast } from "./engine/adjust";
 import { applyChromaKey } from "./engine/chroma";
 import { srgbToLinear } from "./engine/gamma";
 import { detectLocale, LOCALES, type Locale, type MessageKey } from "./i18n";
+import { getWithTTL, removeItem, setWithTTL } from "./storage";
 import {
   clampRect,
   cropPixels,
@@ -50,23 +51,15 @@ function applyTheme(v: string): void {
   else delete document.documentElement.dataset["theme"]; // auto: follow the OS
 }
 
-try {
-  const saved = localStorage.getItem(THEME_KEY);
-  if (saved === "light" || saved === "dark") themeSelect.value = saved;
-} catch {
-  /* storage unavailable: stay on auto */
-}
+const savedTheme = getWithTTL(THEME_KEY);
+if (savedTheme === "light" || savedTheme === "dark") themeSelect.value = savedTheme;
 applyTheme(themeSelect.value);
 
 themeSelect.addEventListener("change", () => {
   const v = themeSelect.value;
   applyTheme(v);
-  try {
-    if (v === "light" || v === "dark") localStorage.setItem(THEME_KEY, v);
-    else localStorage.removeItem(THEME_KEY);
-  } catch {
-    /* ignore */
-  }
+  if (v === "light" || v === "dark") setWithTTL(THEME_KEY, v);
+  else removeItem(THEME_KEY);
 });
 
 // ---------- language ----------
@@ -89,12 +82,8 @@ const EN = LOCALES.find((l) => l.code === "en") as Locale;
     langSelect.append(o);
   }
   langSelect.value = "auto";
-  try {
-    const saved = localStorage.getItem(LANG_KEY);
-    if (saved && LOCALE_CODES.includes(saved)) langSelect.value = saved;
-  } catch {
-    /* stay on auto */
-  }
+  const savedLang = getWithTTL(LANG_KEY);
+  if (savedLang && LOCALE_CODES.includes(savedLang)) langSelect.value = savedLang;
 }
 
 function activeLocale(): Locale {
@@ -123,12 +112,8 @@ function applyI18n(): void {
 }
 
 langSelect.addEventListener("change", () => {
-  try {
-    if (langSelect.value === "auto") localStorage.removeItem(LANG_KEY);
-    else localStorage.setItem(LANG_KEY, langSelect.value);
-  } catch {
-    /* ignore */
-  }
+  if (langSelect.value === "auto") removeItem(LANG_KEY);
+  else setWithTTL(LANG_KEY, langSelect.value);
   applyI18n();
 });
 
