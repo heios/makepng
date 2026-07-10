@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Turn any image into a transparent PNG: crop, pick a color, tune sensitivity, download." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='8' height='8' fill='%23888'/%3E%3Crect x='8' y='8' width='8' height='8' fill='%23888'/%3E%3Crect x='8' width='8' height='8' fill='%23ccc'/%3E%3Crect y='8' width='8' height='8' fill='%23ccc'/%3E%3C/svg%3E" />
+    <title>makepng — transparent PNG maker</title>
+  </head>
+  <body>
+    <header>
+      <h1>makepng</h1>
+      <p>Drop an image → crop → click the color to remove → tune → download PNG</p>
+    </header>
+
+    <main>
+      <div id="dropzone" tabindex="0">
+        <strong>Drop an image here</strong>
+        <span>or click to choose, or paste from clipboard</span>
+        <input id="file-input" type="file" accept="image/*" hidden />
+      </div>
+
+      <div id="workspace" hidden>
+        <div id="canvas-wrap">
+          <div id="checker">
+            <canvas id="view"></canvas>
+            <canvas id="overlay"></canvas>
+          </div>
+        </div>
+
+        <aside id="controls">
+          <section>
+            <h2>Crop</h2>
+            <div class="row">
+              <button id="crop-toggle" type="button">Select region</button>
+              <button id="crop-apply" type="button" disabled>Apply crop</button>
+            </div>
+            <div class="row">
+              <button id="reset-image" type="button">Reset image</button>
+            </div>
+          </section>
+
+          <section>
+            <h2>Transparency</h2>
+            <div class="row">
+              <button id="pick-toggle" type="button">Pick color</button>
+              <span id="key-swatch" title="Key color"></span>
+              <button id="key-clear" type="button" disabled>×</button>
+            </div>
+            <label>Sensitivity <output for="tol">15</output>
+              <input id="tol" type="range" min="0" max="100" value="15" />
+            </label>
+            <label>Feather <output for="feather">10</output>
+              <input id="feather" type="range" min="0" max="100" value="10" />
+            </label>
+          </section>
+
+          <section>
+            <h2>Adjust</h2>
+            <label>Brightness <output for="brightness">0</output>
+              <input id="brightness" type="range" min="-100" max="100" value="0" />
+            </label>
+            <label>Contrast <output for="contrast">0</output>
+              <input id="contrast" type="range" min="-100" max="100" value="0" />
+            </label>
+            <label>Rotate <output for="rotate">0°</output>
+              <input id="rotate" type="range" min="-180" max="180" value="0" />
+            </label>
+            <label>Resize <output for="scale">100%</output>
+              <input id="scale" type="range" min="1" max="400" value="100" />
+            </label>
+          </section>
+
+          <section>
+            <h2>Output</h2>
+            <p id="size-readout">– × – px</p>
+            <button id="download" type="button" class="primary">Download PNG</button>
+          </section>
+        </aside>
+      </div>
+    </main>
+
+    <footer>
+      <a href="https://github.com/heios/makepng">source</a>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
