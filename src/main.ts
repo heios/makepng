@@ -92,7 +92,7 @@ let pickBuffer: Pixels | null = null; // preview after rotate+adjust, before chr
 let params: Params = defaultParams();
 
 // Staged preview cache: geometry (rotate+scale) and adjust results are reused
-// across renders so e.g. a feather drag never re-runs rotation.
+// across renders so e.g. a spread drag never re-runs rotation.
 let stage1: Pixels | null = null; // previewBase after rotate + scale
 let stage2: Pixels | null = null; // stage1 after brightness/contrast
 let geomDirty = true;
