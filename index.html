@@ -11,21 +11,26 @@
     <header>
       <div>
         <h1>makepng</h1>
-        <p>Drop an image → crop → click the color to remove → tune → download PNG</p>
+        <p data-i18n="tagline">Drop an image → crop → click the color to remove → tune → download PNG</p>
       </div>
-      <label id="theme-label">Theme
-        <select id="theme">
-          <option value="auto" selected>Auto</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </label>
+      <div id="header-controls">
+        <label class="header-select"><span data-i18n="language">Language</span>
+          <select id="lang"></select>
+        </label>
+        <label class="header-select"><span data-i18n="theme">Theme</span>
+          <select id="theme">
+            <option value="auto" selected data-i18n="auto">Auto</option>
+            <option value="light" data-i18n="themeLight">Light</option>
+            <option value="dark" data-i18n="themeDark">Dark</option>
+          </select>
+        </label>
+      </div>
     </header>
 
     <main>
       <div id="dropzone" tabindex="0">
-        <strong>Drop an image here</strong>
-        <span>or click to choose, or paste from clipboard</span>
+        <strong data-i18n="dropTitle">Drop an image here</strong>
+        <span data-i18n="dropHint">or click to choose, or paste from clipboard</span>
         <input id="file-input" type="file" accept="image/*" hidden />
       </div>
 
@@ -39,59 +44,59 @@
 
         <aside id="controls">
           <section>
-            <h2>Crop</h2>
+            <h2 data-i18n="crop">Crop</h2>
             <div class="row">
-              <button id="crop-toggle" type="button">Select region</button>
-              <button id="crop-apply" type="button" disabled>Apply crop</button>
+              <button id="crop-toggle" type="button" data-i18n="selectRegion">Select region</button>
+              <button id="crop-apply" type="button" disabled data-i18n="applyCrop">Apply crop</button>
             </div>
             <div class="row">
-              <button id="reset-image" type="button">Reset image</button>
+              <button id="reset-image" type="button" data-i18n="resetImage">Reset image</button>
             </div>
           </section>
 
           <section>
-            <h2>Transparency</h2>
+            <h2 data-i18n="transparency">Transparency</h2>
             <div class="row">
-              <button id="pick-toggle" type="button">Pick color</button>
-              <span id="key-swatch" title="Key color"></span>
+              <button id="pick-toggle" type="button" data-i18n="pickColor">Pick color</button>
+              <span id="key-swatch"></span>
               <button id="key-clear" type="button" disabled>×</button>
             </div>
-            <label>Sensitivity <output for="tol">15</output>
+            <label><span data-i18n="sensitivity">Sensitivity</span> <output for="tol">15</output>
               <input id="tol" type="range" min="0" max="100" value="15" />
             </label>
-            <label title="How far colors similar to the picked one are partially removed">Spread <output for="spread">10</output>
+            <label data-i18n-title="spreadTip"><span data-i18n="spread">Spread</span> <output for="spread">10</output>
               <input id="spread" type="range" min="0" max="100" value="10" />
             </label>
           </section>
 
           <section>
-            <h2>Adjust</h2>
-            <label>Brightness <output for="brightness">0</output>
+            <h2 data-i18n="adjust">Adjust</h2>
+            <label><span data-i18n="brightness">Brightness</span> <output for="brightness">0</output>
               <input id="brightness" type="range" min="-100" max="100" value="0" />
             </label>
-            <label>Contrast <output for="contrast">0</output>
+            <label><span data-i18n="contrast">Contrast</span> <output for="contrast">0</output>
               <input id="contrast" type="range" min="-100" max="100" value="0" />
             </label>
-            <label>Rotate <output for="rotate">0°</output>
+            <label><span data-i18n="rotate">Rotate</span> <output for="rotate">0°</output>
               <input id="rotate" type="range" min="-180" max="180" value="0" />
             </label>
-            <label>Resize <output for="scale">100%</output>
+            <label><span data-i18n="resize">Resize</span> <output for="scale">100%</output>
               <input id="scale" type="range" min="1" max="400" value="100" />
             </label>
           </section>
 
           <section>
-            <h2>Output</h2>
+            <h2 data-i18n="output">Output</h2>
             <p id="size-readout">– × – px</p>
-            <p id="filesize-readout">PNG size: –</p>
-            <button id="download" type="button" class="primary">Download PNG</button>
+            <p id="filesize-readout">–</p>
+            <button id="download" type="button" class="primary" data-i18n="download">Download PNG</button>
           </section>
         </aside>
       </div>
     </main>
 
     <footer>
-      <a href="https://github.com/heios/makepng">source</a>
+      <a href="https://github.com/heios/makepng" data-i18n="source">source</a>
     </footer>
 
     <script type="module" src="/src/main.ts"></script>

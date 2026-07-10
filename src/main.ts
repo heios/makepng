@@ -1,6 +1,8 @@
 import "./style.css";
 import { applyBrightnessContrast } from "./engine/adjust";
 import { applyChromaKey } from "./engine/chroma";
+import { srgbToLinear } from "./engine/gamma";
+import { detectLocale, LOCALES, type Locale, type MessageKey } from "./i18n";
 import {
   clampRect,
   cropPixels,
@@ -37,6 +39,7 @@ const sizeReadout = $<HTMLParagraphElement>("size-readout");
 const filesizeReadout = $<HTMLParagraphElement>("filesize-readout");
 const downloadBtn = $<HTMLButtonElement>("download");
 const themeSelect = $<HTMLSelectElement>("theme");
+const langSelect = $<HTMLSelectElement>("lang");
 
 // ---------- theme ----------
 
@@ -64,6 +67,69 @@ themeSelect.addEventListener("change", () => {
   } catch {
     /* ignore */
   }
+});
+
+// ---------- language ----------
+
+const LANG_KEY = "makepng-lang";
+const LOCALE_CODES = LOCALES.map((l) => l.code);
+const EN = LOCALES.find((l) => l.code === "en") as Locale;
+
+// Populate the picker: Auto + native names (native names are never translated).
+{
+  const autoOpt = document.createElement("option");
+  autoOpt.value = "auto";
+  autoOpt.dataset["i18n"] = "auto";
+  autoOpt.textContent = "Auto";
+  langSelect.append(autoOpt);
+  for (const l of LOCALES) {
+    const o = document.createElement("option");
+    o.value = l.code;
+    o.textContent = l.name;
+    langSelect.append(o);
+  }
+  langSelect.value = "auto";
+  try {
+    const saved = localStorage.getItem(LANG_KEY);
+    if (saved && LOCALE_CODES.includes(saved)) langSelect.value = saved;
+  } catch {
+    /* stay on auto */
+  }
+}
+
+function activeLocale(): Locale {
+  const v = langSelect.value;
+  const code = v === "auto" ? detectLocale(navigator.languages ?? [navigator.language], LOCALE_CODES) : v;
+  return LOCALES.find((l) => l.code === code) ?? EN;
+}
+
+function t(key: MessageKey): string {
+  return activeLocale().messages[key];
+}
+
+function applyI18n(): void {
+  const loc = activeLocale();
+  document.documentElement.lang = loc.code;
+  document.documentElement.dir = loc.rtl ? "rtl" : "ltr";
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-i18n]"))) {
+    el.textContent = loc.messages[el.dataset["i18n"] as MessageKey];
+  }
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-i18n-title]"))) {
+    el.title = loc.messages[el.dataset["i18nTitle"] as MessageKey];
+  }
+  filesizeReadout.dataset["recalc"] = ` ${loc.messages.recalculating}`;
+  if (!downloadBtn.disabled) downloadBtn.textContent = loc.messages.download;
+  updateFileSizeText();
+}
+
+langSelect.addEventListener("change", () => {
+  try {
+    if (langSelect.value === "auto") localStorage.removeItem(LANG_KEY);
+    else localStorage.setItem(LANG_KEY, langSelect.value);
+  } catch {
+    /* ignore */
+  }
+  applyI18n();
 });
 
 const sliders = {
@@ -322,6 +388,27 @@ function setKey(key: readonly [number, number, number] | null): void {
   params.key = key;
   keyClear.disabled = !key;
   keySwatch.style.background = key ? `rgb(${key[0]},${key[1]},${key[2]})` : "";
+  updateCheckerContrast(key);
+}
+
+/**
+ * Make the transparency checkerboard contrast against the picked color, so
+ * removed regions read clearly: light keys get a dark checker and vice versa
+ * (split on linear-light luminance), both tinted toward the key's complement
+ * for hue contrast. No key → theme defaults.
+ */
+function updateCheckerContrast(key: readonly [number, number, number] | null): void {
+  if (!key) {
+    checker.style.removeProperty("--check-a");
+    checker.style.removeProperty("--check-b");
+    return;
+  }
+  const y = 0.2126 * srgbToLinear(key[0]) + 0.7152 * srgbToLinear(key[1]) + 0.0722 * srgbToLinear(key[2]);
+  const comp = [255 - key[0], 255 - key[1], 255 - key[2]] as const;
+  const [gA, gB] = y > 0.25 ? [64, 44] : [232, 206];
+  const mix = (g: number, c: number): number => Math.round(0.72 * g + 0.28 * c);
+  checker.style.setProperty("--check-a", `rgb(${mix(gA, comp[0])},${mix(gA, comp[1])},${mix(gA, comp[2])})`);
+  checker.style.setProperty("--check-b", `rgb(${mix(gB, comp[0])},${mix(gB, comp[1])},${mix(gB, comp[2])})`);
 }
 
 pickToggle.addEventListener("click", () => setPicking(!picking));
@@ -392,6 +479,11 @@ const SIZE_RECALC_DELAY = 500; // ms after the last change
 let sizeRevision = 0;
 let sizeTimer: number | undefined;
 let cachedFinal: { rev: number; blob: Blob } | null = null;
+let lastPngBytes: number | null = null;
+
+function updateFileSizeText(): void {
+  filesizeReadout.textContent = `${t("pngSize")} ${lastPngBytes === null ? "–" : formatBytes(lastPngBytes)}`;
+}
 
 /** Any change → the shown PNG size is stale; recalc 0.5 s after the last change. */
 function markFileSizeStale(): void {
@@ -457,7 +549,8 @@ function ensureFinalBlob(cb: (blob: Blob | null) => void): void {
   pixelsToBlob(px, (blob) => {
     if (blob && rev === sizeRevision) {
       cachedFinal = { rev, blob };
-      filesizeReadout.textContent = `PNG size: ${formatBytes(blob.size)}`;
+      lastPngBytes = blob.size;
+      updateFileSizeText();
       filesizeReadout.classList.remove("stale");
     }
     // If the settings changed mid-encode, markFileSizeStale already queued a
@@ -473,7 +566,7 @@ function recalcFileSize(): void {
 downloadBtn.addEventListener("click", () => {
   if (!working) return;
   downloadBtn.disabled = true;
-  downloadBtn.textContent = "Processing…";
+  downloadBtn.textContent = t("processing");
   // Let the button repaint before the heavy synchronous pipeline runs.
   const finish = (blob: Blob | null, retry: boolean): void => {
     if (blob) {
@@ -488,7 +581,7 @@ downloadBtn.addEventListener("click", () => {
       return;
     }
     downloadBtn.disabled = false;
-    downloadBtn.textContent = "Download PNG";
+    downloadBtn.textContent = t("download");
   };
   setTimeout(() => ensureFinalBlob((blob) => finish(blob, true)), 20);
 });
@@ -497,7 +590,7 @@ downloadBtn.addEventListener("click", () => {
 
 function tryLoad(source: Blob): void {
   loadImage(source).catch(() => {
-    alert("Sorry, that file could not be decoded as an image.");
+    alert(t("decodeError"));
   });
 }
 
@@ -543,3 +636,7 @@ window.addEventListener("paste", (ev) => {
     }
   }
 });
+
+// ---------- init ----------
+
+applyI18n();
