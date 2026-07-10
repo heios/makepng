@@ -61,6 +61,20 @@ let previewBase: Pixels | null = null;
 let pickBuffer: Pixels | null = null; // preview after rotate+adjust, before chroma
 let params: Params = defaultParams();
 
+// Staged preview cache: geometry (rotate+scale) and adjust results are reused
+// across renders so e.g. a feather drag never re-runs rotation.
+let stage1: Pixels | null = null; // previewBase after rotate + scale
+let stage2: Pixels | null = null; // stage1 after brightness/contrast
+let geomDirty = true;
+let adjustDirty = true;
+
+function invalidateGeometry(): void {
+  geomDirty = true;
+}
+function invalidateAdjust(): void {
+  adjustDirty = true;
+}
+
 let cropping = false;
 let picking = false;
 let selection: Rect | null = null;
@@ -94,6 +108,7 @@ async function loadImage(source: Blob): Promise<void> {
   setPicking(false);
   setKey(null);
   rebuildPreviewBase();
+  invalidateGeometry();
   dropzone.hidden = true;
   workspace.hidden = false;
   scheduleRender();
@@ -121,12 +136,27 @@ function scheduleRender(): void {
 
 function render(): void {
   if (!previewBase || !working) return;
-  const rotated = rotatePixels(previewBase, params.rotate);
-  applyBrightnessContrast(rotated.data, params.brightness, params.contrast);
-  pickBuffer = rotated;
-  let result = rotated;
+  if (geomDirty || !stage1) {
+    let p = rotatePixels(previewBase, params.rotate);
+    // Reflect the Resize slider in the preview, capped to PREVIEW_MAX.
+    const target = outputSize(previewBase.w, previewBase.h, { scale: params.scale, rotateDeg: params.rotate });
+    const k = Math.min(1, PREVIEW_MAX / Math.max(target.w, target.h));
+    const tw = Math.max(1, Math.round(target.w * k));
+    const th = Math.max(1, Math.round(target.h * k));
+    if (tw !== p.w || th !== p.h) p = scalePixels(p, tw, th);
+    stage1 = p;
+    geomDirty = false;
+    adjustDirty = true;
+  }
+  if (adjustDirty || !stage2) {
+    stage2 = clone(stage1);
+    applyBrightnessContrast(stage2.data, params.brightness, params.contrast);
+    pickBuffer = stage2;
+    adjustDirty = false;
+  }
+  let result = stage2;
   if (params.key) {
-    result = clone(rotated);
+    result = clone(stage2);
     applyChromaKey(result.data, params.key, params.tol, params.feather);
   }
   view.width = result.w;
@@ -230,6 +260,7 @@ cropApply.addEventListener("click", () => {
   sliders.rotate.value = "0";
   syncOutput(sliders.rotate);
   rebuildPreviewBase();
+  invalidateGeometry();
   setCropping(false);
   scheduleRender();
 });
@@ -243,6 +274,7 @@ resetImage.addEventListener("click", () => {
   setCropping(false);
   setPicking(false);
   rebuildPreviewBase();
+  invalidateGeometry();
   scheduleRender();
 });
 
@@ -304,10 +336,19 @@ for (const [name, input] of Object.entries(sliders)) {
     const v = Number(input.value);
     if (name === "tol") params.tol = (v / 100) * TOL_MAX;
     else if (name === "feather") params.feather = (v / 100) * FEATHER_MAX;
-    else if (name === "brightness") params.brightness = v / 100;
-    else if (name === "contrast") params.contrast = v / 100;
-    else if (name === "rotate") params.rotate = v;
-    else if (name === "scale") params.scale = v / 100;
+    else if (name === "brightness") {
+      params.brightness = v / 100;
+      invalidateAdjust();
+    } else if (name === "contrast") {
+      params.contrast = v / 100;
+      invalidateAdjust();
+    } else if (name === "rotate") {
+      params.rotate = v;
+      invalidateGeometry();
+    } else if (name === "scale") {
+      params.scale = v / 100;
+      invalidateGeometry();
+    }
     syncOutput(input);
     scheduleRender();
   });
@@ -324,12 +365,20 @@ downloadBtn.addEventListener("click", () => {
     try {
       const w = working;
       if (!w) return;
-      const rotated = rotatePixels(w, params.rotate);
       const target = outputSize(w.w, w.h, { scale: params.scale, rotateDeg: params.rotate });
-      const scaled =
-        rotated.w === target.w && rotated.h === target.h ? rotated : scalePixels(rotated, target.w, target.h);
-      applyBrightnessContrast(scaled.data, params.brightness, params.contrast);
-      if (params.key) applyChromaKey(scaled.data, params.key, params.tol, params.feather);
+      // When downscaling, scale BEFORE rotating so the expensive arbitrary-angle
+      // rotation runs on the small buffer (a full-res 45° rotate of a 12 MP photo
+      // would need hundreds of MB of accumulators). A final exact resample pins
+      // the dimensions to the outputSize contract either way.
+      let buf = w;
+      if (params.scale < 1) {
+        buf = scalePixels(w, Math.max(1, Math.round(w.w * params.scale)), Math.max(1, Math.round(w.h * params.scale)));
+      }
+      buf = rotatePixels(buf, params.rotate);
+      if (buf.w !== target.w || buf.h !== target.h) buf = scalePixels(buf, target.w, target.h);
+      applyBrightnessContrast(buf.data, params.brightness, params.contrast);
+      if (params.key) applyChromaKey(buf.data, params.key, params.tol, params.feather);
+      const scaled = buf;
       const c = document.createElement("canvas");
       c.width = scaled.w;
       c.height = scaled.h;
@@ -357,27 +406,40 @@ downloadBtn.addEventListener("click", () => {
 
 // ---------- input sources ----------
 
+function tryLoad(source: Blob): void {
+  loadImage(source).catch(() => {
+    alert("Sorry, that file could not be decoded as an image.");
+  });
+}
+
 dropzone.addEventListener("click", () => fileInput.click());
 dropzone.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" || ev.key === " ") fileInput.click();
 });
 fileInput.addEventListener("change", () => {
   const f = fileInput.files?.[0];
-  if (f) void loadImage(f);
+  if (f) tryLoad(f);
   fileInput.value = "";
 });
 
+// Drag highlight only on the dropzone (with a relatedTarget check to avoid
+// child-element dragleave flicker); body handlers just enable dropping anywhere.
+dropzone.addEventListener("dragover", (ev) => {
+  ev.preventDefault();
+  dropzone.classList.add("drag");
+});
+dropzone.addEventListener("dragleave", (ev) => {
+  if (!(ev.relatedTarget instanceof Node) || !dropzone.contains(ev.relatedTarget)) {
+    dropzone.classList.remove("drag");
+  }
+});
+document.body.addEventListener("dragover", (ev) => ev.preventDefault());
 for (const target of [dropzone, document.body]) {
-  target.addEventListener("dragover", (ev) => {
-    ev.preventDefault();
-    dropzone.classList.add("drag");
-  });
-  target.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
   target.addEventListener("drop", (ev) => {
     ev.preventDefault();
     dropzone.classList.remove("drag");
     const f = ev.dataTransfer?.files?.[0];
-    if (f && f.type.startsWith("image/")) void loadImage(f);
+    if (f && f.type.startsWith("image/")) tryLoad(f);
   });
 }
 
@@ -387,7 +449,7 @@ window.addEventListener("paste", (ev) => {
   for (const item of items) {
     if (item.type.startsWith("image/")) {
       const f = item.getAsFile();
-      if (f) void loadImage(f);
+      if (f) tryLoad(f);
       return;
     }
   }
