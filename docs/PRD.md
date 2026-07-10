@@ -16,7 +16,7 @@ click background color → tune sensitivity → download PNG with alpha.
 3. **Pick color** — eyedropper: click the image to choose the key color (swatch shown).
 4. **Tune** — sliders:
    - *Sensitivity* (tolerance): how far from the key color a pixel may be and still become transparent.
-   - *Feather*: soft alpha falloff band beyond the tolerance edge (no hard cutoff).
+   - *Spread*: colors NEARBY the key in color space are partially removed, fading linearly over this band beyond the tolerance.
    - *Brightness*, *Contrast*: applied in linear light.
    - *Resize* (scale %): output dimensions recalculated on the fly and displayed.
    - *Rotate* (degrees).
@@ -33,7 +33,7 @@ Implementation uses the exact sRGB transfer functions with lookup tables
 (decode: 256-entry LUT; encode: 4096-entry LUT) for speed.
 
 Color distance: Euclidean in linear RGB, normalized to [0,1].
-Alpha map: `d <= tol → 0`; `d >= tol+feather → 255`; smoothstep between.
+Alpha map: `d <= tol → 0`; `d >= tol+spread → 255`; linear ramp between.
 
 ## Architecture (deep modules)
 
@@ -65,5 +65,8 @@ Multiple key colors, magic-wand region selection, undo history, server side.
 
 - 4000×3000 photo processes with visibly live slider response (≤ ~150 ms per update at preview resolution; full resolution used for download).
 - White-background logo keyed on white at defaults yields transparent corners, intact interior.
-- Feather 0 gives hard edge; feather > 0 gives monotonic alpha ramp.
+- Spread 0 gives hard edge; spread > 0 gives monotonic alpha ramp.
 - Output size readout always matches downloaded PNG dimensions.
+- Final PNG file size shown before download; marked stale on any change and
+  recalculated 0.5 s after the last change.
+- Theme picker: auto (default, follows OS), light, dark; persisted.

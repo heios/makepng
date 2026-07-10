@@ -13,7 +13,7 @@ import {
 
 const PREVIEW_MAX = 1000;
 const TOL_MAX = 0.5; // sensitivity slider 0..100 → tolerance 0..0.5
-const FEATHER_MAX = 0.25; // feather slider 0..100 → 0..0.25
+const SPREAD_MAX = 0.25; // spread slider 0..100 → 0..0.25 (reach of partial transparency for nearby colors)
 
 function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -34,11 +34,41 @@ const pickToggle = $<HTMLButtonElement>("pick-toggle");
 const keySwatch = $<HTMLSpanElement>("key-swatch");
 const keyClear = $<HTMLButtonElement>("key-clear");
 const sizeReadout = $<HTMLParagraphElement>("size-readout");
+const filesizeReadout = $<HTMLParagraphElement>("filesize-readout");
 const downloadBtn = $<HTMLButtonElement>("download");
+const themeSelect = $<HTMLSelectElement>("theme");
+
+// ---------- theme ----------
+
+const THEME_KEY = "makepng-theme";
+
+function applyTheme(v: string): void {
+  if (v === "light" || v === "dark") document.documentElement.dataset["theme"] = v;
+  else delete document.documentElement.dataset["theme"]; // auto: follow the OS
+}
+
+try {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === "light" || saved === "dark") themeSelect.value = saved;
+} catch {
+  /* storage unavailable: stay on auto */
+}
+applyTheme(themeSelect.value);
+
+themeSelect.addEventListener("change", () => {
+  const v = themeSelect.value;
+  applyTheme(v);
+  try {
+    if (v === "light" || v === "dark") localStorage.setItem(THEME_KEY, v);
+    else localStorage.removeItem(THEME_KEY);
+  } catch {
+    /* ignore */
+  }
+});
 
 const sliders = {
   tol: $<HTMLInputElement>("tol"),
-  feather: $<HTMLInputElement>("feather"),
+  spread: $<HTMLInputElement>("spread"),
   brightness: $<HTMLInputElement>("brightness"),
   contrast: $<HTMLInputElement>("contrast"),
   rotate: $<HTMLInputElement>("rotate"),
@@ -47,7 +77,7 @@ const sliders = {
 
 interface Params {
   tol: number;
-  feather: number;
+  spread: number;
   brightness: number;
   contrast: number;
   rotate: number;
@@ -81,7 +111,7 @@ let selection: Rect | null = null;
 let dragStart: { x: number; y: number } | null = null;
 
 function defaultParams(): Params {
-  return { tol: 0.15 * TOL_MAX, feather: 0.1 * FEATHER_MAX, brightness: 0, contrast: 0, rotate: 0, scale: 1, key: null };
+  return { tol: 0.15 * TOL_MAX, spread: 0.1 * SPREAD_MAX, brightness: 0, contrast: 0, rotate: 0, scale: 1, key: null };
 }
 
 function clone(p: Pixels): Pixels {
@@ -126,6 +156,7 @@ function rebuildPreviewBase(): void {
 
 let renderQueued = false;
 function scheduleRender(): void {
+  markFileSizeStale(); // every scheduled render corresponds to a change that can affect the final PNG
   if (renderQueued) return;
   renderQueued = true;
   requestAnimationFrame(() => {
@@ -157,7 +188,7 @@ function render(): void {
   let result = stage2;
   if (params.key) {
     result = clone(stage2);
-    applyChromaKey(result.data, params.key, params.tol, params.feather);
+    applyChromaKey(result.data, params.key, params.tol, params.spread);
   }
   view.width = result.w;
   view.height = result.h;
@@ -323,7 +354,7 @@ function syncOutput(input: HTMLInputElement): void {
 
 function syncSlidersFromParams(): void {
   sliders.tol.value = String(Math.round((params.tol / TOL_MAX) * 100));
-  sliders.feather.value = String(Math.round((params.feather / FEATHER_MAX) * 100));
+  sliders.spread.value = String(Math.round((params.spread / SPREAD_MAX) * 100));
   sliders.brightness.value = String(Math.round(params.brightness * 100));
   sliders.contrast.value = String(Math.round(params.contrast * 100));
   sliders.rotate.value = String(params.rotate);
@@ -335,7 +366,7 @@ for (const [name, input] of Object.entries(sliders)) {
   input.addEventListener("input", () => {
     const v = Number(input.value);
     if (name === "tol") params.tol = (v / 100) * TOL_MAX;
-    else if (name === "feather") params.feather = (v / 100) * FEATHER_MAX;
+    else if (name === "spread") params.spread = (v / 100) * SPREAD_MAX;
     else if (name === "brightness") {
       params.brightness = v / 100;
       invalidateAdjust();
@@ -354,54 +385,112 @@ for (const [name, input] of Object.entries(sliders)) {
   });
 }
 
-// ---------- download ----------
+// ---------- final PNG: size preview + download ----------
+
+const SIZE_RECALC_DELAY = 500; // ms after the last change
+
+let sizeRevision = 0;
+let sizeTimer: number | undefined;
+let cachedFinal: { rev: number; blob: Blob } | null = null;
+
+/** Any change → the shown PNG size is stale; recalc 0.5 s after the last change. */
+function markFileSizeStale(): void {
+  sizeRevision++;
+  cachedFinal = null;
+  filesizeReadout.classList.add("stale");
+  if (sizeTimer !== undefined) clearTimeout(sizeTimer);
+  if (!working) return;
+  sizeTimer = window.setTimeout(recalcFileSize, SIZE_RECALC_DELAY);
+}
+
+/** Full-resolution pipeline: crop(applied) → scale/rotate → adjust → chroma. */
+function buildFinalPixels(): Pixels | null {
+  const w = working;
+  if (!w) return null;
+  const target = outputSize(w.w, w.h, { scale: params.scale, rotateDeg: params.rotate });
+  // When downscaling, scale BEFORE rotating so the expensive arbitrary-angle
+  // rotation runs on the small buffer (a full-res 45° rotate of a 12 MP photo
+  // would need hundreds of MB of accumulators). A final exact resample pins
+  // the dimensions to the outputSize contract either way.
+  let buf = w;
+  if (params.scale < 1) {
+    buf = scalePixels(w, Math.max(1, Math.round(w.w * params.scale)), Math.max(1, Math.round(w.h * params.scale)));
+  }
+  buf = rotatePixels(buf, params.rotate);
+  if (buf.w !== target.w || buf.h !== target.h) buf = scalePixels(buf, target.w, target.h);
+  applyBrightnessContrast(buf.data, params.brightness, params.contrast);
+  if (params.key) applyChromaKey(buf.data, params.key, params.tol, params.spread);
+  return buf;
+}
+
+function pixelsToBlob(p: Pixels, cb: (blob: Blob | null) => void): void {
+  const c = document.createElement("canvas");
+  c.width = p.w;
+  c.height = p.h;
+  const ctx = c.getContext("2d");
+  if (!ctx) {
+    cb(null);
+    return;
+  }
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(p.data), p.w, p.h), 0, 0);
+  c.toBlob(cb, "image/png");
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/** Encode the final PNG for the current settings, reusing the cache when fresh. */
+function ensureFinalBlob(cb: (blob: Blob | null) => void): void {
+  if (cachedFinal && cachedFinal.rev === sizeRevision) {
+    cb(cachedFinal.blob);
+    return;
+  }
+  const rev = sizeRevision;
+  const px = buildFinalPixels();
+  if (!px) {
+    cb(null);
+    return;
+  }
+  pixelsToBlob(px, (blob) => {
+    if (blob && rev === sizeRevision) {
+      cachedFinal = { rev, blob };
+      filesizeReadout.textContent = `PNG size: ${formatBytes(blob.size)}`;
+      filesizeReadout.classList.remove("stale");
+    }
+    // If the settings changed mid-encode, markFileSizeStale already queued a
+    // fresh recalc; this result is simply dropped.
+    cb(blob && rev === sizeRevision ? blob : null);
+  });
+}
+
+function recalcFileSize(): void {
+  ensureFinalBlob(() => {});
+}
 
 downloadBtn.addEventListener("click", () => {
   if (!working) return;
   downloadBtn.disabled = true;
   downloadBtn.textContent = "Processing…";
   // Let the button repaint before the heavy synchronous pipeline runs.
-  setTimeout(() => {
-    try {
-      const w = working;
-      if (!w) return;
-      const target = outputSize(w.w, w.h, { scale: params.scale, rotateDeg: params.rotate });
-      // When downscaling, scale BEFORE rotating so the expensive arbitrary-angle
-      // rotation runs on the small buffer (a full-res 45° rotate of a 12 MP photo
-      // would need hundreds of MB of accumulators). A final exact resample pins
-      // the dimensions to the outputSize contract either way.
-      let buf = w;
-      if (params.scale < 1) {
-        buf = scalePixels(w, Math.max(1, Math.round(w.w * params.scale)), Math.max(1, Math.round(w.h * params.scale)));
-      }
-      buf = rotatePixels(buf, params.rotate);
-      if (buf.w !== target.w || buf.h !== target.h) buf = scalePixels(buf, target.w, target.h);
-      applyBrightnessContrast(buf.data, params.brightness, params.contrast);
-      if (params.key) applyChromaKey(buf.data, params.key, params.tol, params.feather);
-      const scaled = buf;
-      const c = document.createElement("canvas");
-      c.width = scaled.w;
-      c.height = scaled.h;
-      const ctx = c.getContext("2d");
-      if (!ctx) return;
-      ctx.putImageData(new ImageData(new Uint8ClampedArray(scaled.data), scaled.w, scaled.h), 0, 0);
-      c.toBlob((blob) => {
-        if (blob) {
-          const a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = "makepng.png";
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        }
-        downloadBtn.disabled = false;
-        downloadBtn.textContent = "Download PNG";
-      }, "image/png");
-    } catch (err) {
-      downloadBtn.disabled = false;
-      downloadBtn.textContent = "Download PNG";
-      throw err;
+  const finish = (blob: Blob | null, retry: boolean): void => {
+    if (blob) {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "makepng.png";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } else if (retry && working) {
+      // Settings changed while encoding — encode once more with the new ones.
+      ensureFinalBlob((b) => finish(b, false));
+      return;
     }
-  }, 20);
+    downloadBtn.disabled = false;
+    downloadBtn.textContent = "Download PNG";
+  };
+  setTimeout(() => ensureFinalBlob((blob) => finish(blob, true)), 20);
 });
 
 // ---------- input sources ----------

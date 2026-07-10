@@ -27,7 +27,7 @@ function linearDistance(
 }
 
 describe("applyChromaKey", () => {
-  it("keys the exact key color to alpha 0 and leaves a different pixel opaque (tolerance 0, feather 0)", () => {
+  it("keys the exact key color to alpha 0 and leaves a different pixel opaque (tolerance 0, spread 0)", () => {
     const data = pixels([0, 255, 0, 255], [255, 0, 0, 255]);
     applyChromaKey(data, [0, 255, 0], 0, 0);
     expect(data[3]).toBe(0); // exact key match
@@ -50,7 +50,7 @@ describe("applyChromaKey", () => {
     }
   });
 
-  it("with tolerance 0 and feather 0, keys ONLY the exact key color", () => {
+  it("with tolerance 0 and spread 0, keys ONLY the exact key color", () => {
     const data = pixels(
       [0, 255, 0, 255], // exact key
       [0, 254, 0, 255], // one 8-bit step away
@@ -64,7 +64,7 @@ describe("applyChromaKey", () => {
     expect(data[15]).toBe(255);
   });
 
-  it("feather = 0 is a hard cutoff at the tolerance", () => {
+  it("spread = 0 is a hard cutoff at the tolerance", () => {
     // Keyed on black: sRGB 40 has linear ~0.021 (inside tol 0.05),
     // sRGB 128 has linear ~0.216 (outside).
     const data = pixels([40, 40, 40, 255], [128, 128, 128, 255]);
@@ -73,7 +73,7 @@ describe("applyChromaKey", () => {
     expect(data[7]).toBe(255);
   });
 
-  it("with feather > 0, alpha is monotonically non-decreasing with distance from key", () => {
+  it("with spread > 0, alpha is monotonically non-decreasing with distance from key", () => {
     const n = 256;
     const data = new Uint8ClampedArray(n * 4);
     for (let v = 0; v < n; v++) {
@@ -93,16 +93,15 @@ describe("applyChromaKey", () => {
     expect(data[255 * 4 + 3]).toBe(255);
   });
 
-  it("smoothstep feather band produces intermediate alpha", () => {
+  it("spread band fades LINEARLY with color distance (nearby colors partially affected)", () => {
     const key: readonly [number, number, number] = [0, 0, 0];
     const tolerance = 0.05;
-    const feather = 0.3;
-    // sRGB 128 → d ≈ 0.216, inside (0.05, 0.35): expect smoothstep value
+    const spread = 0.3;
+    // sRGB 128 → d ≈ 0.216, inside (0.05, 0.35): expect linear ramp value
     const data = pixels([128, 128, 128, 255]);
-    applyChromaKey(data, key, tolerance, feather);
+    applyChromaKey(data, key, tolerance, spread);
     const d = linearDistance([128, 128, 128], key);
-    const t = (d - tolerance) / feather;
-    const f = t * t * (3 - 2 * t);
+    const f = (d - tolerance) / spread;
     expect(data[3]).toBe(Math.round(255 * f));
     expect(data[3] as number).toBeGreaterThan(0);
     expect(data[3] as number).toBeLessThan(255);
@@ -111,21 +110,20 @@ describe("applyChromaKey", () => {
   it("multiplies into existing alpha and never increases it", () => {
     const key: readonly [number, number, number] = [0, 0, 0];
     const tolerance = 0.05;
-    const feather = 0.3;
+    const spread = 0.3;
     const data = pixels(
       [0, 0, 0, 0], // already transparent, inside key → stays 0
       [255, 255, 255, 0], // already transparent, far from key → stays 0
       [255, 255, 255, 128], // semi-transparent, outside keyed range → stays 128
-      [128, 128, 128, 128] // semi-transparent, in the feather band → scales DOWN
+      [128, 128, 128, 128] // semi-transparent, in the spread band → scales DOWN
     );
-    applyChromaKey(data, key, tolerance, feather);
+    applyChromaKey(data, key, tolerance, spread);
     expect(data[3]).toBe(0);
     expect(data[7]).toBe(0);
     expect(data[11]).toBe(128);
 
     const d = linearDistance([128, 128, 128], key);
-    const t = (d - tolerance) / feather;
-    const f = t * t * (3 - 2 * t);
+    const f = (d - tolerance) / spread;
     expect(data[15]).toBe(Math.round(128 * f));
     expect(data[15] as number).toBeLessThan(128);
     expect(data[15] as number).toBeGreaterThan(0);
@@ -146,7 +144,7 @@ describe("applyChromaKey", () => {
     expect(data[7]).toBe(0); // gray 40 becomes transparent
   });
 
-  it("boundary behavior with feather: f = 0 at d <= tolerance, f = 1 at d >= tolerance + feather", () => {
+  it("boundary behavior with spread: f = 0 at d <= tolerance, f = 1 at d >= tolerance + spread", () => {
     const key: readonly [number, number, number] = [0, 0, 0];
     // gray 128 → d ≈ 0.2159
     const d = linearDistance([128, 128, 128], key);
@@ -155,7 +153,20 @@ describe("applyChromaKey", () => {
     expect(dataLow[3]).toBe(0);
 
     const dataHigh = pixels([128, 128, 128, 255]);
-    applyChromaKey(dataHigh, key, 0.01, d - 0.02); // d >= tol + feather → 1
+    applyChromaKey(dataHigh, key, 0.01, d - 0.02); // d >= tol + spread → 1
     expect(dataHigh[3]).toBe(255);
+  });
+
+  it("halfway through the spread band gives ~50% alpha (linear, not smoothstep)", () => {
+    const key: readonly [number, number, number] = [0, 0, 0];
+    const d = linearDistance([128, 128, 128], key); // ≈ 0.2159
+    // Choose tolerance/spread so d sits exactly halfway: tol = d - s/2… use
+    // tol = 0.1, spread = 2*(d - 0.1) → t = 0.5. Smoothstep would give 0.5 too;
+    // use t = 0.25 instead: tol = 0.1, spread = 4*(d - 0.1).
+    const tol = 0.1;
+    const spread = 4 * (d - tol); // t = 0.25 → linear 0.25, smoothstep would be ~0.156
+    const data = pixels([128, 128, 128, 255]);
+    applyChromaKey(data, key, tol, spread);
+    expect(data[3]).toBe(Math.round(255 * 0.25));
   });
 });

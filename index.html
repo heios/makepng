@@ -9,8 +9,17 @@
   </head>
   <body>
     <header>
-      <h1>makepng</h1>
-      <p>Drop an image → crop → click the color to remove → tune → download PNG</p>
+      <div>
+        <h1>makepng</h1>
+        <p>Drop an image → crop → click the color to remove → tune → download PNG</p>
+      </div>
+      <label id="theme-label">Theme
+        <select id="theme">
+          <option value="auto" selected>Auto</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
     </header>
 
     <main>
@@ -50,8 +59,8 @@
             <label>Sensitivity <output for="tol">15</output>
               <input id="tol" type="range" min="0" max="100" value="15" />
             </label>
-            <label>Feather <output for="feather">10</output>
-              <input id="feather" type="range" min="0" max="100" value="10" />
+            <label title="How far colors similar to the picked one are partially removed">Spread <output for="spread">10</output>
+              <input id="spread" type="range" min="0" max="100" value="10" />
             </label>
           </section>
 
@@ -74,6 +83,7 @@
           <section>
             <h2>Output</h2>
             <p id="size-readout">– × – px</p>
+            <p id="filesize-readout">PNG size: –</p>
             <button id="download" type="button" class="primary">Download PNG</button>
           </section>
         </aside>
